@@ -7,8 +7,17 @@ lazy val root = (project in file("."))
     name := "sensor-ingestion"
   )
 
-libraryDependencies += "org.apache.spark" % "spark-streaming_2.12" % "3.3.0" % "provided"
-libraryDependencies += "org.apache.spark" % "spark-streaming-kafka-0-10_2.12" % "3.3.0" % "provided"
+libraryDependencies += "org.apache.spark" % "spark-sql_2.12" % "3.3.0" % Provided
+libraryDependencies += "org.apache.spark" % "spark-streaming_2.12" % "3.3.0" % Provided
+libraryDependencies += "org.apache.spark" % "spark-streaming-kafka-0-10_2.12" % "3.3.0" % Provided
 
-libraryDependencies += "org.testcontainers" % "testcontainers" % "1.17.3" % "test"
-libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.12" % "test"
+libraryDependencies += "org.testcontainers" % "testcontainers" % "1.17.3" % Test
+libraryDependencies += "org.testcontainers" % "kafka" % "1.17.3" % Test
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.12" % Test
+libraryDependencies += "org.apache.spark" %% "spark-sql-kafka-0-10" % "3.3.0" % Test
+libraryDependencies += "org.apache.spark" % "spark-sql_2.12" % "3.3.0" % Test
+libraryDependencies += "org.apache.kafka" % "kafka-clients" % "2.8.1" % Test
+libraryDependencies += "org.apache.spark" % "spark-streaming_2.12" % "3.3.0" % Test
+libraryDependencies += "org.apache.spark" % "spark-streaming-kafka-0-10_2.12" % "3.3.0" % Test
+
+

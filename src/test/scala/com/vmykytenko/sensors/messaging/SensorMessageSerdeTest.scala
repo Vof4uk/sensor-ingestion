@@ -1,5 +1,6 @@
 package com.vmykytenko.sensors.messaging
 
+import com.vmykytenko.sensors.collect.{SensorMessage, SensorMessageDeserializer, SensorMessageSerializer}
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should
 
@@ -11,10 +12,10 @@ class SensorMessageSerdeTest extends AnyFlatSpec with should.Matchers {
       SensorMessage("myEnv", "a lonely humidity meter", "humidity", 0.6856, 1657724196)
 
     val serialized =
-      new SensorMessageSerializer().serialize("topic-1", expected)
+      SensorMessageSerializer.serialize("topic-1", expected)
 
     val deserialized =
-      new SensorMessageDeserializer().deserialize("topic-1", serialized)
+      SensorMessageDeserializer.deserialize("topic-1", serialized)
 
     deserialized shouldEqual expected
 

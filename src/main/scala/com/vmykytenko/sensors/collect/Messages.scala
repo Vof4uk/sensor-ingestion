@@ -1,4 +1,4 @@
-package com.vmykytenko.sensors.messaging
+package com.vmykytenko.sensors.collect
 
 import org.apache.kafka.common.serialization.{Deserializer, Serializer}
 
@@ -17,7 +17,7 @@ case class SensorMessage(environmentName: String,
                          value: Double,
                          timestamp: Long)
 
-class SensorMessageSerializer extends Serializer[SensorMessage] {
+object SensorMessageSerializer extends Serializer[SensorMessage] {
   // TODO:Java serialization is bad. Replace with smth better. E.g. protobuf
   override def serialize(topic: String, data: SensorMessage): Array[Byte] = {
     try {
@@ -34,7 +34,7 @@ class SensorMessageSerializer extends Serializer[SensorMessage] {
   }
 }
 
-class SensorMessageDeserializer extends Deserializer[SensorMessage] {
+object SensorMessageDeserializer extends Deserializer[SensorMessage] {
   override def deserialize(topic: String, bytes: Array[Byte]): SensorMessage = {
     val byteIn = new ByteArrayInputStream(bytes)
     val objIn = new ObjectInputStream(byteIn)
@@ -48,7 +48,7 @@ class SensorMessageDeserializer extends Deserializer[SensorMessage] {
 case class SensorMessageKey(environmentName: String,
                             deviceName: String)
 
-class SensorMessageKeyDeserializer extends Deserializer[SensorMessageKey] {
+object SensorMessageKeyDeserializer extends Deserializer[SensorMessageKey] {
   override def deserialize(topic: String, bytes: Array[Byte]): SensorMessageKey = {
     val byteIn = new ByteArrayInputStream(bytes)
     val objIn = new ObjectInputStream(byteIn)
@@ -59,7 +59,7 @@ class SensorMessageKeyDeserializer extends Deserializer[SensorMessageKey] {
   }
 }
 
-class SensorMessageKeySerializer extends Serializer[SensorMessageKey] {
+object SensorMessageKeySerializer extends Serializer[SensorMessageKey] {
   // TODO:Java serialization is bad. Replace with smth better. E.g. protobuf
   override def serialize(topic: String, data: SensorMessageKey): Array[Byte] = {
     try {
