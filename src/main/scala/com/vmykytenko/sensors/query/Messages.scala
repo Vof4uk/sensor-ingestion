@@ -36,7 +36,6 @@ object SensorReportRequestSerializer extends Serializer[SensorReportRequest] {
 
 case class SensorReportRequestExt(environmentName: String,
                                   respondTo: String,
-                                  correlation_id: String,
                                   report: Array[Byte])
 
 case class SensorReportItem(environmentName: String,

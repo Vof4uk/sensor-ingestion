@@ -20,4 +20,6 @@ libraryDependencies += "org.apache.kafka" % "kafka-clients" % "2.8.1" % Test
 libraryDependencies += "org.apache.spark" % "spark-streaming_2.12" % "3.3.0" % Test
 libraryDependencies += "org.apache.spark" % "spark-streaming-kafka-0-10_2.12" % "3.3.0" % Test
 
-
+ Test / javaOptions ++= Seq(
+  "-Dlog4j.debug=true",
+  "-Dlog4j.configuration=log4j.properties")
