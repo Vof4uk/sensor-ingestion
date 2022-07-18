@@ -15,12 +15,14 @@ case object SensorDashboardFeed {
    */
   def apply(servers: String,
             topic: String,
-            parquetSensorsPath: String)(implicit spark: SparkSession): Unit = {
+            storageOptions: Map[String, String],
+            isTest: Boolean)(implicit spark: SparkSession): Unit = {
+
     val rawKafkaMessages = spark.readStream
       .format("kafka")
       .option("kafka.bootstrap.servers", servers)
       .option("subscribe", topic)
-      .option("startingOffsets", "latest")
+      .option("startingOffsets", "earliest")
       .load()
 
     implicit val encoderIn = Encoders.product[SensorMessage]
@@ -34,8 +36,13 @@ case object SensorDashboardFeed {
       .writeStream
       .partitionBy("environmentName", "deviceName", "timestamp")
       .format("parquet")
-      .option("checkpointLocation", "./target/spark/checkpoint/SensorDashboardFeed")
-      .option("path", parquetSensorsPath)
+      .option("checkpointLocation", storageOptions("checkpoint.location"))
+      .option("path", storageOptions("parquet.path"))
       .start()
+
+    if (isTest) {
+      rawKafkaMessages.writeStream.format("console").start()
+      parsedStream.writeStream.format("console").start()
+    }
   }
 }

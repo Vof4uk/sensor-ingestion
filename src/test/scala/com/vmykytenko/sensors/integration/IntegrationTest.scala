@@ -15,6 +15,7 @@ import org.testcontainers.utility.DockerImageName
 
 import java.time.Duration
 import java.util
+import java.util.UUID
 import scala.collection.JavaConverters._
 
 class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAfterAll {
@@ -23,150 +24,156 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
       .withEmbeddedZookeeper()
   KAFKA.start()
 
+  val MillisNow = 1658087210173L
+
   private val SensorTopic = "sensor-topic-1"
   private val ReportTopic = "report-topic-1"
   private val ReportRespondTopic = "report-topic-2"
 
-  def producerConfig(): util.Map[String, Object] =
-    Map[String, Object](
+  case class TestConfig(testDirectory: String)
+
+  case class SensorFeedApp(producer: KafkaProducer[SensorMessageKey, SensorMessage],
+                           topic: String)
+
+  case class GetReportApp(producer: KafkaProducer[SensorReportRequestKey, SensorReportRequest],
+                          topicProducer: String,
+                          consumer: KafkaConsumer[SensorReportKey, SensorReport],
+                          topicConsumer: String)
+
+  def getSensorFeedApplication(implicit sparkSession: SparkSession, testConfig: TestConfig): SensorFeedApp = {
+    val storageOptions = Map(
+      "checkpoint.location" -> s"${testConfig.testDirectory}/feed",
+      "parquet.path" -> s"${testConfig.testDirectory}/tables"
+    )
+    SensorDashboardFeed(
+      KAFKA.getBootstrapServers,
+      SensorTopic,
+      storageOptions,
+      true)
+
+    val producerConfig = Map[String, Object](
       "bootstrap.servers" -> KAFKA.getBootstrapServers
     ).asJava
 
-  def consumerConfig(): util.Map[String, Object] = Map[String, Object](
-    "bootstrap.servers" -> KAFKA.getBootstrapServers,
-    "auto.offset.reset" -> "earliest",
-    "group.id" -> "console-consumer-myapp"
-  ).asJava
-
-  def getProducerReport() = new KafkaProducer[SensorReportRequestKey, SensorReportRequest](
-    producerConfig(),
-    SensorReportRequestKeySer,
-    SensorReportRequestSer
-  )
-
-  def getProducerSensor() = new KafkaProducer[SensorMessageKey, SensorMessage](
-    producerConfig(),
-    SensorMessageKeySer,
-    SensorMessageSer
-  )
-
-  def getConsumerSensor() = new KafkaConsumer[SensorMessageKey, SensorMessage](
-    consumerConfig(),
-    SensorMessageKeyDe,
-    SensorMessageDe)
-
-  def getConsumerReport() = new KafkaConsumer[SensorReportRequestKey, SensorReportRequest](
-    consumerConfig(),
-    SensorReportRequestKeyDe,
-    SensorReportRequestDe)
-
-  "Kafka container" should "serve messages" in {
-    val producer = getProducerSensor()
-    val consumer = getConsumerSensor()
-
-    consumer.subscribe(List(SensorTopic).asJava)
-
-    val key = SensorMessageKey("myEnv", "dev-id-3")
-    val value = SensorMessage("myEnv", "dev-id-3", "metric-1", 0.01, 1L)
-    producer.send(new ProducerRecord(SensorTopic, key, value)).get()
-    producer.flush()
-
-    val records = consumer.poll(Duration.ofSeconds(5))
-    records.count() shouldBe 1
-    records.iterator().next().key() shouldBe key
-    records.iterator().next().value() shouldBe value
-    consumer.close()
-    producer.close()
+    SensorFeedApp(
+      topic = SensorTopic,
+      producer = new KafkaProducer[SensorMessageKey, SensorMessage](
+        producerConfig,
+        SensorMessageKeySer,
+        SensorMessageSer)
+    )
   }
 
-  "The system" should "query data" in {
-    val producer1 = getProducerReport()
-    val consumer1 = getConsumerReport()
-    consumer1.subscribe(List(ReportRespondTopic).asJava)
+  def getSensorViewQueryApplication(implicit sparkSession: SparkSession, testConfig: TestConfig): GetReportApp = {
 
-    implicit val spark =
-      SparkSession.builder()
-        .appName(s"test-sensor-ingestion-${System.currentTimeMillis()}")
-        .master("local[*]")
-        .getOrCreate()
+    val consumerConfig = Map[String, Object](
+      "bootstrap.servers" -> KAFKA.getBootstrapServers,
+      "auto.offset.reset" -> "earliest",
+      "group.id" -> "console-consumer-myapp"
+    ).asJava
 
-    SensorDashboardQuery(Map(
+    val producerConfig = Map[String, Object](
+      "bootstrap.servers" -> KAFKA.getBootstrapServers
+    ).asJava
+
+    val storageOptions = Map(
+      "checkpoint.location" -> s"${testConfig.testDirectory}/query",
+      "parquet.path" -> s"${testConfig.testDirectory}/tables"
+    )
+
+    SensorDashboardQuery(
+      Map(
       "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
       "subscribe" -> ReportTopic),
-      Map("parquet.path" -> "./target/spark/tables/sensor_data_v2"),
+      storageOptions,
       Map(
         "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
         "topic" -> ReportRespondTopic
-      )
+      ), true)
+
+    val consumer = new KafkaConsumer[SensorReportKey, SensorReport](
+      consumerConfig,
+      SensorReportKeyDe,
+      SensorReportDe)
+
+    consumer.subscribe(List(ReportRespondTopic).asJava)
+    GetReportApp(
+      producer = new KafkaProducer[SensorReportRequestKey, SensorReportRequest](
+        producerConfig,
+        SensorReportRequestKeySer,
+        SensorReportRequestSer
+      ),
+      topicProducer = ReportTopic,
+      consumer = consumer,
+      topicConsumer = ReportRespondTopic
     )
-
-    val reportRequest = SensorReportRequest("myEnv2", "cid-01")
-    val reportRequestKey = SensorReportRequestKey("myEnv2")
-    val reportRequested = producer1.send(
-      new ProducerRecord(
-        ReportTopic,
-        null,
-        System.currentTimeMillis(),
-        reportRequestKey,
-        reportRequest)
-    ).get()
-    producer1.flush()
-
-    val records = consumer1.poll(Duration.ofSeconds(10))
-    val records2 = consumer1.poll(Duration.ofSeconds(10))
-
-    println(records.count())
-    println(records2.count())
-
-    records.count() shouldBe 1
-    records.iterator().next().key() shouldBe key
-    records.iterator().next().value() shouldBe value
-
-    consumer1.close()
-    producer1.close()
-    spark.stop()
-    spark.close()
   }
 
-  "The system" should "save data" in {
-    val producer0 = getProducerSensor()
+  def getTestSparkSession() = SparkSession.builder()
+    .appName(s"test-sensor-${System.currentTimeMillis()}")
+    .master("local[8]")
+    .getOrCreate()
 
-    implicit val spark =
-      SparkSession.builder()
-        .appName(s"test-sensor-ingestion-${System.currentTimeMillis()}")
-        .master("local[*]")
-        .getOrCreate()
+  val sensor1device1oldest =
+    SensorMessageKey("myEnv-1", s"dev-id-1") ->
+      SensorMessage(s"myEnv1", s"dev-id-1", "metric-1", 0.01, MillisNow)
 
-    SensorDashboardFeed(KAFKA.getBootstrapServers, SensorTopic, "./target/spark/tables/sensor_data_v2")
-
-    (1 to 20)
-      .foreach(i => {
-        val key = SensorMessageKey(s"myEnv${i % 7}", s"dev-id-2${i % 3}")
-        val value = SensorMessage(s"myEnv${i % 7}", s"dev-id-2${i % 3}", "metric-1", 0.01 * i, System.currentTimeMillis())
-        println(s"Sending message $value")
-        val sentData = producer0.send(new ProducerRecord(SensorTopic, key, value)).get()
-        producer0.flush()
-        Thread.sleep(500)
-      })
+  val sensor1device1newest =
+    SensorMessageKey("myEnv-1", s"dev-id-1") ->
+      SensorMessage(s"myEnv1", s"dev-id-1", "metric-1", 0.09, MillisNow + 100)
 
 
-    producer0.close()
-    spark.stop()
+  def sendTo[K, V](topic: String, producer: KafkaProducer[K, V], message: (K, V)) = {
+    producer.send(new ProducerRecord(topic, message._1, message._2))
+    producer.flush()
+  }
+
+  def getResponse[K, V](topicConsumer: String, consumer: KafkaConsumer[K, V]): List[(K, V)] = {
+    val poll = consumer.poll(Duration.ofSeconds(5))
+    val list = new util.ArrayList[(K, V)]()
+    poll.forEach(r => list.add(r.key() -> r.value()))
+    list.asScala.toList
+  }
+
+  def getTestConfig(): TestConfig = {
+    TestConfig(
+      testDirectory = s"./target/spark/test/${this.getClass.getSimpleName}/${UUID.randomUUID().toString}"
+    )
+  }
+
+  "The system" should "save and return latest data" in {
+    implicit val testConfig = getTestConfig()
+    implicit val spark = getTestSparkSession()
+    val sensorFeedApp = getSensorFeedApplication
+
+    sendTo(sensorFeedApp.topic, sensorFeedApp.producer, sensor1device1oldest)
+    sendTo(sensorFeedApp.topic, sensorFeedApp.producer, sensor1device1newest)
+
+    Thread.sleep(60000)
+
+    val reportApp = getSensorViewQueryApplication
+    sendTo(reportApp.topicProducer, reportApp.producer,
+      (SensorReportRequestKey(sensor1device1oldest._1.environmentName),
+        SensorReportRequest(sensor1device1oldest._1.environmentName, "cid-1")))
+    val response = getResponse(reportApp.topicConsumer, reportApp.consumer)
+
+    response.length shouldBe 1
+    response.head._1 shouldBe SensorReportKey(sensor1device1oldest._1.environmentName)
+    response.head._2.cid shouldBe "cid-1"
+    response.head._2.items should contain theSameElementsAs (List())
+
   }
 
   "Spark job" should "read parquet" in {
     val spark =
-      SparkSession.builder()
-        .appName(s"test-sensor-ingestion-${System.currentTimeMillis()}")
-        .master("local[*]")
-        .getOrCreate()
+      getTestSparkSession()
 
     implicit val itemEncoder = Encoders.product[SensorReportItem]
 
     val envName = "myEnv5"
     spark
       .read
-      .parquet("./target/spark/tables/sensor_data_v2")
+      .parquet("ParquetPath")
       .filter(col("environmentName").equalTo(envName))
       .groupBy(col("environmentName"), col("deviceName"))
       .agg(max_by(col("sensor_reading"), col("timestamp"))

@@ -33,21 +33,29 @@ class ReportAggregator extends Aggregator[ReportRawData, mutable.Map[String, Rep
   }
 
   override def finish(reduction: mutable.Map[String, ReportRawData]): CompiledReportMessage = {
-    val data = reduction.head._2
-    CompiledReportMessage( // todo inject topic here
-      key = SensorReportKeySer.serialize("", SensorReportKey(data.environmentName)),
-      value = SensorReportSer.serialize("",
-        SensorReport(
-          cid = data.cid,
-          items = reduction.values.map(v => SensorReportItem(
-            v.environmentName,
-            v.deviceName,
-            v.metric,
-            v.value,
-            v.timestamp
-          )).toArray
-        ))
-    )
+    if (reduction.isEmpty) {
+      CompiledReportMessage(
+        SensorReportKeySer.serialize("", SensorReportKey("")),
+        SensorReportSer.serialize("", SensorReport("", Array()))
+      )
+    }
+    else {
+      val data = reduction.head._2
+      CompiledReportMessage( // todo inject topic here
+        key = SensorReportKeySer.serialize("", SensorReportKey(data.environmentName)),
+        value = SensorReportSer.serialize("",
+          SensorReport(
+            cid = data.cid,
+            items = reduction.values.map(v => SensorReportItem(
+              v.environmentName,
+              v.deviceName,
+              v.metric,
+              v.value,
+              v.timestamp
+            )).toArray
+          ))
+      )
+    }
   }
 
   override def bufferEncoder: Encoder[mutable.Map[String, ReportRawData]] =

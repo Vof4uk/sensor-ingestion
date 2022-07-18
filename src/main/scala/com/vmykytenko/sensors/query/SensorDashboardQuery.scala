@@ -28,7 +28,6 @@ case object SensorDashboardQuery {
   private def parsedRequests(kafkaConsumerOptions: Map[String, String])
                             (implicit spark: SparkSession, requestEncoder: Encoder[SensorReportRequestIn]): Dataset[SensorReportRequestIn] = {
 
-    // TODO: it can be just String
     val rawKafkaMessages = spark.readStream
       .format("kafka")
       .options(kafkaConsumerOptions)
@@ -58,7 +57,8 @@ case object SensorDashboardQuery {
    */
   def apply(kafkaConsumerOptions: Map[String, String],
             storageOptions: Map[String, String],
-            kafkaProducerOptions: Map[String, String])(implicit spark: SparkSession): Unit = {
+            kafkaProducerOptions: Map[String, String],
+            isTest: Boolean)(implicit spark: SparkSession): Unit = {
 
     implicit val sensorMsgEncoder = Encoders.product[SensorMessage]
     implicit val requestEncoder = Encoders.product[SensorReportRequestIn]
@@ -68,60 +68,32 @@ case object SensorDashboardQuery {
 
     val sensorsView: Dataset[SensorMessage] = spark
       .read
+      .schema(implicitly[Encoder[SensorMessage]].schema)
       .parquet(storageOptions("parquet.path"))
       .as[SensorMessage]
 
-    // TODO: it can be just String
     val parsedReq = parsedRequests(kafkaConsumerOptions)
 
     val reportRawJoin = parsedReq // Fix no response if join is empty
       .join(sensorsView, "environmentName")
       .as[ReportRawData]
 
-    reportRawJoin.printSchema()
-
     val reportAggregator = new ReportAggregator().toColumn
-    val responses =
-      reportRawJoin
-        .select(reportAggregator)
-    //        .withWatermark("requestedAt", "1 second")
-    //        .groupByKey(_.environmentName)
-    //          col("environmentName"),
-    //          window(col("requestedAt"), "1 second"))
-    //        .agg(
-    //          reportAggregator
-    //        )
-    //        .select(
-    //          col("reportMessage.key").as("key"),
-    //          col("reportMessage.value").as("value")
-    //        )
+    val compiledReports = reportRawJoin.select(reportAggregator)
 
-
-    //    responses
-    //      .writeStream
-    //      .option("checkpointLocation", "./target/spark/checkpoints_query/22")
-    //      .format("console")
-    //                  .outputMode("complete")
-    //      .start()
-
-    //    rawKafkaMessages
-    //      .writeStream
-    //      .option("checkpointLocation", "./target/spark/checkpoints_feed/33")
-    //      .format("console")
-    //      //            .outputMode("complete")
-    //      .start()
-    //      .select(
-    //        col("respondTo").as("topic"),
-    //        col("report").as("value")
-    //      )
-    responses
+    compiledReports
       .writeStream
       .format("kafka")
       .outputMode("complete")
-      .option("checkpointLocation", "./target/spark/checkpoints_query/")
+      .option("checkpointLocation", storageOptions("checkpoint.location"))
       .options(kafkaProducerOptions)
       .start()
 
+    if (isTest) {
+      parsedReq.writeStream.format("console").start()
+      reportRawJoin.writeStream.format("console").start()
+      compiledReports.writeStream.outputMode("complete").format("console").start()
+    }
   }
 
 }
