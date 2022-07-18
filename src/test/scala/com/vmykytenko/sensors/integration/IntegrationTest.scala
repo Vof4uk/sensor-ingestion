@@ -3,6 +3,7 @@ package com.vmykytenko.sensors.integration
 import com.vmykytenko.sensors._
 import com.vmykytenko.sensors.collect._
 import com.vmykytenko.sensors.query.SensorDashboardQuery
+import org.apache.commons.io.FileUtils
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord}
 import org.apache.spark.sql.SparkSession
@@ -12,6 +13,7 @@ import org.scalatest.matchers.should
 import org.testcontainers.containers.KafkaContainer
 import org.testcontainers.utility.DockerImageName
 
+import java.nio.file.Paths
 import java.time.Duration
 import java.util
 import java.util.UUID
@@ -25,11 +27,11 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
 
   val MillisNow = 1658087210173L
 
-  private val SensorTopic = "sensor-topic-1"
-  private val ReportTopic = "report-topic-1"
-  private val ReportRespondTopic = "report-topic-2"
-
-  case class TestConfig(testDirectory: String)
+  case class TestConfig(tempDirectory: String,
+                        parquetDirectory: String,
+                        sensorFeedTopic: String,
+                        queryReportTopic: String,
+                        listenReportTopic: String)
 
   case class SensorFeedApp(producer: KafkaProducer[SensorMessageKey, SensorMessage],
                            topic: String) {
@@ -48,12 +50,12 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
 
   def getSensorFeedApplication(implicit sparkSession: SparkSession, testConfig: TestConfig): SensorFeedApp = {
     val storageOptions = Map(
-      "checkpoint.location" -> s"${testConfig.testDirectory}/feed",
-      "parquet.path" -> s"${testConfig.testDirectory}/tables"
+      "checkpoint.location" -> s"${testConfig.tempDirectory}/feed",
+      "parquet.path" -> s"${testConfig.parquetDirectory}"
     )
     SensorDashboardFeed(
       KAFKA.getBootstrapServers,
-      SensorTopic,
+      testConfig.sensorFeedTopic,
       storageOptions,
       true)
 
@@ -62,7 +64,7 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     ).asJava
 
     SensorFeedApp(
-      topic = SensorTopic,
+      topic = testConfig.sensorFeedTopic,
       producer = new KafkaProducer[SensorMessageKey, SensorMessage](
         producerConfig,
         SensorMessageKeySer,
@@ -83,18 +85,18 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     ).asJava
 
     val storageOptions = Map(
-      "checkpoint.location" -> s"${testConfig.testDirectory}/query",
-      "parquet.path" -> s"${testConfig.testDirectory}/tables"
+      "checkpoint.location" -> s"${testConfig.tempDirectory}/query",
+      "parquet.path" -> s"${testConfig.parquetDirectory}"
     )
 
     SensorDashboardQuery(
       Map(
         "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
-        "subscribe" -> ReportTopic),
+        "subscribe" -> testConfig.queryReportTopic),
       storageOptions,
       Map(
         "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
-        "topic" -> ReportRespondTopic
+        "topic" -> testConfig.listenReportTopic
       ), true)
 
     val consumer = new KafkaConsumer[SensorReportKey, SensorReport](
@@ -102,16 +104,16 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
       SensorReportKeyDe,
       SensorReportDe)
 
-    consumer.subscribe(List(ReportRespondTopic).asJava)
+    consumer.subscribe(List(testConfig.listenReportTopic).asJava)
     GetReportApp(
       producer = new KafkaProducer[SensorReportRequestKey, SensorReportRequest](
         producerConfig,
         SensorReportRequestKeySer,
         SensorReportRequestSer
       ),
-      topicProducer = ReportTopic,
+      topicProducer = testConfig.queryReportTopic,
       consumer = consumer,
-      topicConsumer = ReportRespondTopic
+      topicConsumer = testConfig.listenReportTopic
     )
   }
 
@@ -142,12 +144,19 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
   }
 
   def getTestConfig(): TestConfig = {
+    val testDirectory = s"./target/spark/test/${this.getClass.getSimpleName}/${UUID.randomUUID().toString}"
+    val parquetDirectory = s"$testDirectory/tables"
+    FileUtils.createParentDirectories(Paths.get(parquetDirectory + "/dummy").toFile)
     TestConfig(
-      testDirectory = s"./target/spark/test/${this.getClass.getSimpleName}/${UUID.randomUUID().toString}"
+      tempDirectory = testDirectory,
+      parquetDirectory = parquetDirectory,
+      sensorFeedTopic = s"feed-${System.currentTimeMillis()}",
+      queryReportTopic = s"query-report-${System.currentTimeMillis()}",
+      listenReportTopic = s"listen-report-${System.currentTimeMillis()}"
     )
   }
 
-  "The system" should "save and return latest of empty reports" in {
+  "The system" should "answer empty report, when no records" in {
     implicit val testConfig = getTestConfig()
 
     val feedApp = getSensorFeedApplication

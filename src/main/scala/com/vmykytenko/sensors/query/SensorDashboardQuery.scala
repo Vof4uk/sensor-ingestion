@@ -92,6 +92,7 @@ case object SensorDashboardQuery {
 
     val reportRawJoin = parsedReq
       .join(sensorsView, List("environmentName"), "left_outer")
+      // Client calls that have no data in source db after JOIN will produce NULLs
       .select(
         col("environmentName"),
         col("requestedAt"),
