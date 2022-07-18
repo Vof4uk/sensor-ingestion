@@ -1,12 +1,11 @@
 package com.vmykytenko.sensors.integration
 
+import com.vmykytenko.sensors._
 import com.vmykytenko.sensors.collect._
 import com.vmykytenko.sensors.query.SensorDashboardQuery
-import com.vmykytenko.sensors._
 import org.apache.kafka.clients.consumer.KafkaConsumer
 import org.apache.kafka.clients.producer.{KafkaProducer, ProducerRecord}
-import org.apache.spark.sql.functions.{col, collect_list, lit, max_by}
-import org.apache.spark.sql.{Encoders, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should
@@ -33,12 +32,19 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
   case class TestConfig(testDirectory: String)
 
   case class SensorFeedApp(producer: KafkaProducer[SensorMessageKey, SensorMessage],
-                           topic: String)
+                           topic: String) {
+    def close(): Unit = producer.close()
+  }
 
   case class GetReportApp(producer: KafkaProducer[SensorReportRequestKey, SensorReportRequest],
                           topicProducer: String,
                           consumer: KafkaConsumer[SensorReportKey, SensorReport],
-                          topicConsumer: String)
+                          topicConsumer: String) {
+    def close(): Unit = {
+      consumer.close()
+      producer.close()
+    }
+  }
 
   def getSensorFeedApplication(implicit sparkSession: SparkSession, testConfig: TestConfig): SensorFeedApp = {
     val storageOptions = Map(
@@ -83,8 +89,8 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
 
     SensorDashboardQuery(
       Map(
-      "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
-      "subscribe" -> ReportTopic),
+        "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
+        "subscribe" -> ReportTopic),
       storageOptions,
       Map(
         "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
@@ -109,7 +115,7 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     )
   }
 
-  def getTestSparkSession() = SparkSession.builder()
+  implicit val spark = SparkSession.builder()
     .appName(s"test-sensor-${System.currentTimeMillis()}")
     .master("local[8]")
     .getOrCreate()
@@ -141,9 +147,28 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     )
   }
 
-  "The system" should "save and return latest data" in {
+  "The system" should "save and return latest of empty reports" in {
     implicit val testConfig = getTestConfig()
-    implicit val spark = getTestSparkSession()
+
+    val feedApp = getSensorFeedApplication
+
+    val reportApp = getSensorViewQueryApplication
+    sendTo(reportApp.topicProducer, reportApp.producer,
+      (SensorReportRequestKey(sensor1device1oldest._1.environmentName),
+        SensorReportRequest(sensor1device1oldest._1.environmentName, "cid-1")))
+    val response = getResponse(reportApp.topicConsumer, reportApp.consumer)
+
+    feedApp.close()
+    reportApp.close()
+
+    response.length shouldBe 1
+    response.head._1 shouldBe SensorReportKey(sensor1device1oldest._1.environmentName)
+    response.head._2.cid shouldBe "cid-1"
+    response.head._2.items should contain theSameElementsAs (List())
+  }
+
+  "The system" should "save and return latest reports" in {
+    implicit val testConfig = getTestConfig()
     val sensorFeedApp = getSensorFeedApplication
 
     sendTo(sensorFeedApp.topic, sensorFeedApp.producer, sensor1device1oldest)
@@ -156,15 +181,26 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
         SensorReportRequest(sensor1device1oldest._1.environmentName, "cid-1")))
     val response = getResponse(reportApp.topicConsumer, reportApp.consumer)
 
+    reportApp.close()
+    sensorFeedApp.close()
+
     response.length shouldBe 1
     response.head._1 shouldBe SensorReportKey(sensor1device1oldest._1.environmentName)
     response.head._2.cid shouldBe "cid-1"
-    response.head._2.items should contain theSameElementsAs (List())
+    response.head._2.items should contain theSameElementsAs (List(SensorReportItem(
+      environmentName = sensor1device1newest._2.environmentName,
+      deviceName = sensor1device1newest._2.deviceName,
+      metric = sensor1device1newest._2.metric,
+      value = sensor1device1newest._2.value,
+      timestamp = sensor1device1newest._2.timestamp
+    )))
 
   }
 
   override def afterAll() = {
     KAFKA.close()
+    spark.stop()
+    spark.close()
   }
 
 }
