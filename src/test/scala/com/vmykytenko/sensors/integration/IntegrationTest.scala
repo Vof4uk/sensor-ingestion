@@ -53,7 +53,7 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
       "checkpoint.location" -> s"${testConfig.tempDirectory}/feed",
       "parquet.path" -> s"${testConfig.parquetDirectory}"
     )
-    SensorDashboardFeed(
+    SensorDataFeed(
       KAFKA.getBootstrapServers,
       testConfig.sensorFeedTopic,
       storageOptions,
@@ -196,13 +196,13 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     response.length shouldBe 1
     response.head._1 shouldBe SensorReportKey(sensor1device1oldest._1.environmentName)
     response.head._2.cid shouldBe "cid-1"
-    response.head._2.items should contain theSameElementsAs (List(SensorReportItem(
+    response.head._2.items should contain theSameElementsAs List(SensorReportItem(
       environmentName = sensor1device1newest._2.environmentName,
       deviceName = sensor1device1newest._2.deviceName,
       metric = sensor1device1newest._2.metric,
       value = sensor1device1newest._2.value,
       timestamp = sensor1device1newest._2.timestamp
-    )))
+    ))
 
   }
 

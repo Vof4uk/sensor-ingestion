@@ -7,27 +7,27 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.expressions.Aggregator
 
 import scala.collection.mutable
+case class AggKey(deviceName: String, metric: String)
 
-class ReportAggregator(valueSerializer: Serializer[SensorReport],
-                       keySerializer: Serializer[SensorReportKey]) extends Aggregator[ReportRawData, mutable.Map[String, ReportRawData], CompiledReport] {
-  override def zero: mutable.Map[String, ReportRawData] = mutable.Map.empty
+class ReportAggregator() extends Aggregator[ReportRawData, mutable.Map[AggKey, ReportRawData], CompiledReport] {
+  override def zero: mutable.Map[AggKey, ReportRawData] = mutable.Map.empty
 
   private def isNewer(oldValue: ReportRawData, newValue: ReportRawData) = {
     oldValue.timestamp < newValue.timestamp
   }
 
-  override def reduce(acc: mutable.Map[String, ReportRawData], msg: ReportRawData): mutable.Map[String, ReportRawData] = {
+  override def reduce(acc: mutable.Map[AggKey, ReportRawData], msg: ReportRawData): mutable.Map[AggKey, ReportRawData] = {
     val mustAdd = msg.deviceName != ReportRawData.empty.deviceName &&
-      acc.get(msg.deviceName).forall { old =>
+      acc.get(AggKey(msg.deviceName, msg.metric)).forall { old =>
         isNewer(old, msg)
       }
     if (mustAdd || acc.isEmpty) { // already checked msg.deviceName
-      acc.put(msg.deviceName, msg)
+      acc.put(AggKey(msg.deviceName, msg.metric), msg)
     }
     acc
   }
 
-  override def merge(b1: mutable.Map[String, ReportRawData], b2: mutable.Map[String, ReportRawData]): mutable.Map[String, ReportRawData] = {
+  override def merge(b1: mutable.Map[AggKey, ReportRawData], b2: mutable.Map[AggKey, ReportRawData]): mutable.Map[AggKey, ReportRawData] = {
     val merged = (b1.keySet ++ b2.keySet).map(k =>
       (b1.get(k), b2.get(k)) match {
         case (Some(v), None) => k -> v
@@ -39,7 +39,7 @@ class ReportAggregator(valueSerializer: Serializer[SensorReport],
     mutable.Map(merged: _*)
   }
 
-  override def finish(reduction: mutable.Map[String, ReportRawData]): CompiledReport = {
+  override def finish(reduction: mutable.Map[AggKey, ReportRawData]): CompiledReport = {
     if (reduction.isEmpty) {
       CompiledReport(
         key = SensorReportKey.empty,
@@ -53,7 +53,7 @@ class ReportAggregator(valueSerializer: Serializer[SensorReport],
         value = SensorReport(
           cid = cid,
           items = reduction.collect {
-            case (deviceName, data) if deviceName != ReportRawData.empty.deviceName =>
+            case (key, data) if key.deviceName != ReportRawData.empty.deviceName =>
               SensorReportItem(
                 data.environmentName,
                 data.deviceName,
@@ -66,8 +66,8 @@ class ReportAggregator(valueSerializer: Serializer[SensorReport],
     }
   }
 
-  override def bufferEncoder: Encoder[mutable.Map[String, ReportRawData]] =
-    ExpressionEncoder[mutable.Map[String, ReportRawData]]
+  override def bufferEncoder: Encoder[mutable.Map[AggKey, ReportRawData]] =
+    ExpressionEncoder[mutable.Map[AggKey, ReportRawData]]
 
   override def outputEncoder: Encoder[CompiledReport] =
     ExpressionEncoder[CompiledReport]

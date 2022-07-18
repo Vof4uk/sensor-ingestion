@@ -3,7 +3,7 @@ package com.vmykytenko.sensors.collect
 import com.vmykytenko.sensors.{SensorMessage, SensorMessageDe}
 import org.apache.spark.sql.{Encoders, SparkSession}
 
-case object SensorDashboardFeed {
+case object SensorDataFeed {
 
   /**
    *
@@ -34,7 +34,7 @@ case object SensorDashboardFeed {
 
     parsedStream
       .writeStream
-      .partitionBy("environmentName", "deviceName", "timestamp")
+      .partitionBy("environmentName", "deviceName", "metric", "timestamp")
       .format("parquet")
       .option("checkpointLocation", storageOptions("checkpoint.location"))
       .option("path", storageOptions("parquet.path"))

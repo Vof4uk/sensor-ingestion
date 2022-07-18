@@ -104,10 +104,7 @@ case object SensorDashboardQuery {
       .as[ReportRawData]
 
     val reportAggregator =
-      new ReportAggregator(
-        keySerializer = SensorReportKeySer,
-        valueSerializer = SensorReportSer
-      ).toColumn
+      new ReportAggregator().toColumn
     val compiledReports = reportRawJoin
       .select(reportAggregator)
       // Empty micro-batches produce noise when aggregated,
