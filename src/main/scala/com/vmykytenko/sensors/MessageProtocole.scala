@@ -29,5 +29,11 @@ case class SensorReportItem(environmentName: String,
                             timestamp: Long)
 
 case class SensorReport(cid: String, items: Array[SensorReportItem])
+object SensorReport{
+  val empty = SensorReport("", Array.empty)
+}
 
 case class SensorReportKey(environmentName: String)
+object SensorReportKey{
+  val empty = SensorReportKey("")
+}

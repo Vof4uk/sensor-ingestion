@@ -129,7 +129,7 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
   }
 
   def getResponse[K, V](topicConsumer: String, consumer: KafkaConsumer[K, V]): List[(K, V)] = {
-    val poll = consumer.poll(Duration.ofSeconds(5))
+    val poll = consumer.poll(Duration.ofSeconds(20))
     val list = new util.ArrayList[(K, V)]()
     poll.forEach(r => list.add(r.key() -> r.value()))
     list.asScala.toList
@@ -149,7 +149,6 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     sendTo(sensorFeedApp.topic, sensorFeedApp.producer, sensor1device1oldest)
     sendTo(sensorFeedApp.topic, sensorFeedApp.producer, sensor1device1newest)
 
-    Thread.sleep(60000)
 
     val reportApp = getSensorViewQueryApplication
     sendTo(reportApp.topicProducer, reportApp.producer,
@@ -161,27 +160,6 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     response.head._1 shouldBe SensorReportKey(sensor1device1oldest._1.environmentName)
     response.head._2.cid shouldBe "cid-1"
     response.head._2.items should contain theSameElementsAs (List())
-
-  }
-
-  "Spark job" should "read parquet" in {
-    val spark =
-      getTestSparkSession()
-
-    implicit val itemEncoder = Encoders.product[SensorReportItem]
-
-    val envName = "myEnv5"
-    spark
-      .read
-      .parquet("ParquetPath")
-      .filter(col("environmentName").equalTo(envName))
-      .groupBy(col("environmentName"), col("deviceName"))
-      .agg(max_by(col("sensor_reading"), col("timestamp"))
-        .as("sensor_reading")
-      ).withColumn("environmentName", lit(envName))
-      .groupBy(col("environmentName"))
-      .agg(collect_list(col("sensor_reading")).as("sensor_reading"))
-      .show(100)
 
   }
 

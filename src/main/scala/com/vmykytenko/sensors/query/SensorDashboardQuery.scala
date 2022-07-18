@@ -1,12 +1,12 @@
 package com.vmykytenko.sensors.query
 
-import com.vmykytenko.sensors.{SensorMessage, SensorReportRequest, SensorReportRequestDe}
-import org.apache.commons.codec.StringEncoder
+import com.vmykytenko.sensors._
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
-import org.apache.spark.sql.functions.{col, current_timestamp, expr, from_unixtime, window}
-import org.apache.spark.sql.{Dataset, Encoder, Encoders, Row, SparkSession}
+import org.apache.spark.sql.functions.{coalesce, col, lit}
+import org.apache.spark.sql.{Dataset, Encoder, Encoders, SparkSession}
 
 import java.sql.Timestamp
+import java.time.LocalDateTime
 
 /**
  * Reduces the SensorMessage by device id, leaving tha latest.
@@ -19,7 +19,22 @@ case class ReportRawData(cid: String,
                          timestamp: Long,
                          value: Double)
 
+object ReportRawData {
+  val empty = ReportRawData(
+    cid = "",
+    requestedAt = Timestamp.valueOf(LocalDateTime.MIN),
+    environmentName = "",
+    deviceName = "",
+    metric = "",
+    timestamp = Long.MinValue,
+    value = Double.MinValue
+  )
+}
+
+
 case class SensorReportRequestIn(requestedAt: Timestamp, cid: String, environmentName: String)
+
+case class CompiledReport(key: SensorReportKey, value: SensorReport)
 
 case class CompiledReportMessage(key: Array[Byte], value: Array[Byte])
 
@@ -63,6 +78,7 @@ case object SensorDashboardQuery {
     implicit val sensorMsgEncoder = Encoders.product[SensorMessage]
     implicit val requestEncoder = Encoders.product[SensorReportRequestIn]
     implicit val reportRawEncoder = Encoders.product[ReportRawData]
+    implicit val reportMessageEncoder = Encoders.product[CompiledReportMessage]
     implicit val stringEncoder = ExpressionEncoder[String]()
 
 
@@ -74,14 +90,35 @@ case object SensorDashboardQuery {
 
     val parsedReq = parsedRequests(kafkaConsumerOptions)
 
-    val reportRawJoin = parsedReq // Fix no response if join is empty
-      .join(sensorsView, "environmentName")
+    val reportRawJoin = parsedReq
+      .join(sensorsView, List("environmentName"), "left_outer")
+      .select(
+        col("environmentName"),
+        col("requestedAt"),
+        col("cid"),
+        coalesce(col("deviceName"), lit(ReportRawData.empty.deviceName)).as("deviceName"),
+        coalesce(col("metric"), lit(ReportRawData.empty.metric)).as("metric"),
+        coalesce(col("value"), lit(ReportRawData.empty.value)).as("value"),
+        coalesce(col("timestamp"), lit(ReportRawData.empty.timestamp)).as("timestamp"))
       .as[ReportRawData]
 
-    val reportAggregator = new ReportAggregator().toColumn
-    val compiledReports = reportRawJoin.select(reportAggregator)
+    val reportAggregator =
+      new ReportAggregator(
+        keySerializer = SensorReportKeySer,
+        valueSerializer = SensorReportSer
+      ).toColumn
+    val compiledReports = reportRawJoin
+      .select(reportAggregator)
+      // Empty micro-batches produce noise when aggregated,
+      // this is a trade-off to send responses for env that have no results.
+      .filter(_.key != SensorReportKey.empty)
 
     compiledReports
+      .map(report =>
+        CompiledReportMessage(
+          key = SensorReportKeySer.serialize("", report.key),
+          value = SensorReportSer.serialize("", report.value)
+        ))
       .writeStream
       .format("kafka")
       .outputMode("complete")
