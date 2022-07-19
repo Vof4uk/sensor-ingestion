@@ -6,8 +6,7 @@ import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.{Encoders, SparkSession}
 
 /**
- * Reduces the SensorMessage by device id, leaving tha latest.
- * Uses Parquet filled by other apps as a Datasource.
+ * Consumes sensor data and saves to shared datastore.
  */
 case object SensorDataFeed {
 

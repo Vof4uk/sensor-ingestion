@@ -5,6 +5,9 @@ import org.json4s.{DefaultFormats}
 import org.json4s.jackson.Serialization.{read, write}
 import JsonKafkaSerialization._
 
+/** Simple serialization, not good for production */
+
+
 case object JsonKafkaSerialization {
   implicit val formats = DefaultFormats
 }

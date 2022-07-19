@@ -1,7 +1,6 @@
 package com.vmykytenko.sensors.query
 
 import com.vmykytenko.sensors._
-import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.functions.{coalesce, col, lit}
 import org.apache.spark.sql.{Dataset, Encoder, Encoders, SparkSession}
 
