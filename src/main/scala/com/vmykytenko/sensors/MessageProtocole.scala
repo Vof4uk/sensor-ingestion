@@ -1,7 +1,6 @@
 package com.vmykytenko.sensors
 
-import java.sql.Timestamp
-
+/** Kafka messages entities */
 //{
 //    "environmentName": "",
 //    "deviceName": "",

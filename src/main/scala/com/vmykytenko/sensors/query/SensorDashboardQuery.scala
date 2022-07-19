@@ -8,9 +8,7 @@ import org.apache.spark.sql.{Dataset, Encoder, Encoders, SparkSession}
 import java.sql.Timestamp
 import java.time.LocalDateTime
 
-/**
- * Reduces the SensorMessage by device id, leaving tha latest.
- */
+/** Data after join and required for report. */
 case class ReportRawData(cid: String,
                          requestedAt: Timestamp,
                          environmentName: String,
@@ -31,13 +29,20 @@ object ReportRawData {
   )
 }
 
-
+/** Request data from user, sufficient to compile a report. */
 case class SensorReportRequestIn(requestedAt: Timestamp, cid: String, environmentName: String)
 
+/** Report Message data read for serialization. */
 case class CompiledReport(key: SensorReportKey, value: SensorReport)
 
+/** Message ready for Kafka stream out. */
 case class CompiledReportMessage(key: Array[Byte], value: Array[Byte])
 
+
+/**
+ * Reduces the SensorMessage by device id, leaving tha latest.
+ * Uses Parquet filled by other apps as a Datasource.
+ */
 case object SensorDashboardQuery {
 
   private def parsedRequests(kafkaConsumerOptions: Map[String, String])
@@ -91,7 +96,10 @@ case object SensorDashboardQuery {
     val parsedReq = parsedRequests(kafkaConsumerOptions)
 
     val reportRawJoin = parsedReq
-      .join(sensorsView, List("environmentName"), "left_outer")
+      .join(
+        sensorsView,
+        List("environmentName", "environmentName"),
+        "left_outer")
       // Client calls that have no data in source db after JOIN will produce NULLs
       .select(
         col("environmentName"),
@@ -126,7 +134,7 @@ case object SensorDashboardQuery {
 
     if (isTest) {
       parsedReq.writeStream.format("console").start()
-      reportRawJoin.writeStream.format("console").start()
+      reportRawJoin.writeStream.option("numRows", 200).format("console").start()
       compiledReports.writeStream.outputMode("complete").format("console").start()
     }
   }

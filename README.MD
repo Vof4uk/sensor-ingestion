@@ -66,5 +66,7 @@ NFR-4: Although it was not required, all the events are saved to HDFS, it is par
 ## Testing
 I chose Testcontainers to emulate e2e tests. 
 
-## Possible issues:
+## Known issues:
 1. The number of events will grow, and Join operation may become a bottleneck and expensive. Data cleanup should help.
+2. As tests showed the latest micro-batches from the sensor feed are getting slowly to the Parquet storage, only if the feed keeps coming.
+   

@@ -1,6 +1,8 @@
 package com.vmykytenko.sensors.collect
 
 import com.vmykytenko.sensors.{SensorMessage, SensorMessageDe}
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.{Encoders, SparkSession}
 
 case object SensorDataFeed {
@@ -32,12 +34,27 @@ case object SensorDataFeed {
         SensorMessageDe.deserialize(topic, row.getAs[Array[Byte]]("value"))
       })
 
-    parsedStream
+    val grouped = parsedStream
+      .withColumn("watermark", timestamp_seconds(col("timestamp")))
+      .withWatermark("watermark", "5 seconds")
+      .groupBy(
+        window(col("watermark"), "5 seconds"),
+        col("environmentName"),
+        col("deviceName"),
+        col("metric")
+      )
+      .agg(
+        max_by(col("value"), col("timestamp")).as("value"),
+        max("timestamp").as("timestamp")
+      )
+
+    grouped
       .writeStream
-      .partitionBy("environmentName", "deviceName", "metric", "timestamp")
-      .format("parquet")
-      .option("checkpointLocation", storageOptions("checkpoint.location"))
-      .option("path", storageOptions("parquet.path"))
+      .trigger(Trigger.ProcessingTime("0 seconds"))
+            .partitionBy("environmentName", "deviceName", "metric", "timestamp")
+            .format("parquet")
+            .option("checkpointLocation", storageOptions("checkpoint.location"))
+            .option("path", storageOptions("parquet.path"))
       .start()
 
     if (isTest) {

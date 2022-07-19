@@ -25,8 +25,6 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
       .withEmbeddedZookeeper()
   KAFKA.start()
 
-  val MillisNow = 1658087210173L
-
   case class TestConfig(tempDirectory: String,
                         parquetDirectory: String,
                         sensorFeedTopic: String,
@@ -122,13 +120,17 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     .master("local[8]")
     .getOrCreate()
 
-  val sensor1device1oldest =
+  def env1device1metric1 =
     SensorMessageKey("myEnv-1", s"dev-id-1") ->
-      SensorMessage(s"myEnv1", s"dev-id-1", "metric-1", 0.01, MillisNow)
+      SensorMessage(s"myEnv-1", s"dev-id-1", "metric-1", 0.01, System.currentTimeMillis())
 
-  val sensor1device1newest =
+  def env1device1metric2 =
     SensorMessageKey("myEnv-1", s"dev-id-1") ->
-      SensorMessage(s"myEnv1", s"dev-id-1", "metric-1", 0.09, MillisNow + 100)
+      SensorMessage(s"myEnv-1", s"dev-id-1", "metric-2", 0.09, System.currentTimeMillis())
+
+  def env2device1metric1 =
+    SensorMessageKey("myEnv-2", s"dev-id-1") ->
+      SensorMessage(s"myEnv-2", s"dev-id-1", "metric-1", 0.12, System.currentTimeMillis())
 
 
   def sendTo[K, V](topic: String, producer: KafkaProducer[K, V], message: (K, V)) = {
@@ -162,48 +164,62 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     val feedApp = getSensorFeedApplication
 
     val reportApp = getSensorViewQueryApplication
+
+    Thread.sleep(20000)
     sendTo(reportApp.topicProducer, reportApp.producer,
-      (SensorReportRequestKey(sensor1device1oldest._1.environmentName),
-        SensorReportRequest(sensor1device1oldest._1.environmentName, "cid-1")))
+      (SensorReportRequestKey(env1device1metric1._1.environmentName),
+        SensorReportRequest(env1device1metric1._1.environmentName, "cid-1")))
     val response = getResponse(reportApp.topicConsumer, reportApp.consumer)
 
     feedApp.close()
     reportApp.close()
 
     response.length shouldBe 1
-    response.head._1 shouldBe SensorReportKey(sensor1device1oldest._1.environmentName)
+    response.head._1 shouldBe SensorReportKey(env1device1metric1._1.environmentName)
     response.head._2.cid shouldBe "cid-1"
     response.head._2.items should contain theSameElementsAs (List())
   }
 
-  "The system" should "save and return latest reports" in {
+  "The system" should "save and return latest reports, exactly same environmentName" in {
     implicit val testConfig = getTestConfig()
     val sensorFeedApp = getSensorFeedApplication
-
-    sendTo(sensorFeedApp.topic, sensorFeedApp.producer, sensor1device1oldest)
-    sendTo(sensorFeedApp.topic, sensorFeedApp.producer, sensor1device1newest)
-
-
     val reportApp = getSensorViewQueryApplication
+
+
+    (1 to 30).foreach { _ =>
+      sendTo(sensorFeedApp.topic, sensorFeedApp.producer, env1device1metric1)
+      Thread.sleep(250)
+      sendTo(sensorFeedApp.topic, sensorFeedApp.producer, env1device1metric2)
+      Thread.sleep(250)
+      sendTo(sensorFeedApp.topic, sensorFeedApp.producer, env2device1metric1)
+      Thread.sleep(250)
+    }
+    val expectedSensor1device1metric1 = env1device1metric1
+    val expectedSensor1device1metric2 = env1device1metric2
+
+    Thread.sleep(20000)
+
     sendTo(reportApp.topicProducer, reportApp.producer,
-      (SensorReportRequestKey(sensor1device1oldest._1.environmentName),
-        SensorReportRequest(sensor1device1oldest._1.environmentName, "cid-1")))
-    val response = getResponse(reportApp.topicConsumer, reportApp.consumer)
+      (SensorReportRequestKey(env1device1metric1._1.environmentName),
+        SensorReportRequest(env1device1metric1._1.environmentName, "cid-1")))
+    var response = getResponse(reportApp.topicConsumer, reportApp.consumer)
+    if (response.isEmpty) {
+      response = getResponse(reportApp.topicConsumer, reportApp.consumer)
+    }
 
     reportApp.close()
     sensorFeedApp.close()
 
     response.length shouldBe 1
-    response.head._1 shouldBe SensorReportKey(sensor1device1oldest._1.environmentName)
+    response.head._1 shouldBe SensorReportKey(env1device1metric1._1.environmentName)
     response.head._2.cid shouldBe "cid-1"
-    response.head._2.items should contain theSameElementsAs List(SensorReportItem(
-      environmentName = sensor1device1newest._2.environmentName,
-      deviceName = sensor1device1newest._2.deviceName,
-      metric = sensor1device1newest._2.metric,
-      value = sensor1device1newest._2.value,
-      timestamp = sensor1device1newest._2.timestamp
-    ))
-
+    val items = response.head._2.items
+    items.length shouldBe 2
+    items.forall(_.environmentName == "myEnv-1") shouldBe true
+    items.forall(_.deviceName == "dev-id-1") shouldBe true
+    items.exists(_.metric == "metric-1") shouldBe true
+    items.exists(_.metric == "metric-2") shouldBe true
+    items.forall(item => Math.abs(expectedSensor1device1metric1._2.timestamp - item.timestamp) < Duration.ofSeconds(5).toMillis)
   }
 
   override def afterAll() = {
@@ -211,5 +227,4 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     spark.stop()
     spark.close()
   }
-
 }

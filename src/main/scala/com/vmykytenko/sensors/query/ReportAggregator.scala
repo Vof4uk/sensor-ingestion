@@ -7,8 +7,14 @@ import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.expressions.Aggregator
 
 import scala.collection.mutable
-case class AggKey(deviceName: String, metric: String)
+case class AggKey(environmentName: String, deviceName: String, metric: String)
 
+/**
+ * Used for Spark Aggregation of groups.
+ * Finds records with latest Timestamp for each unique combination of environmentName, deviceName and
+ * metric.
+ * Returns Report Value and Key ready for Kafka serialization.
+ */
 class ReportAggregator() extends Aggregator[ReportRawData, mutable.Map[AggKey, ReportRawData], CompiledReport] {
   override def zero: mutable.Map[AggKey, ReportRawData] = mutable.Map.empty
 
@@ -18,11 +24,11 @@ class ReportAggregator() extends Aggregator[ReportRawData, mutable.Map[AggKey, R
 
   override def reduce(acc: mutable.Map[AggKey, ReportRawData], msg: ReportRawData): mutable.Map[AggKey, ReportRawData] = {
     val mustAdd = msg.deviceName != ReportRawData.empty.deviceName &&
-      acc.get(AggKey(msg.deviceName, msg.metric)).forall { old =>
+      acc.get(AggKey(msg.environmentName, msg.deviceName, msg.metric)).forall { old =>
         isNewer(old, msg)
       }
     if (mustAdd || acc.isEmpty) { // already checked msg.deviceName
-      acc.put(AggKey(msg.deviceName, msg.metric), msg)
+      acc.put(AggKey(msg.environmentName, msg.deviceName, msg.metric), msg)
     }
     acc
   }
@@ -32,8 +38,8 @@ class ReportAggregator() extends Aggregator[ReportRawData, mutable.Map[AggKey, R
       (b1.get(k), b2.get(k)) match {
         case (Some(v), None) => k -> v
         case (None, Some(v)) => k -> v
-        case (Some(old), Some(newer)) if isNewer(old, newer) => k -> old // TODO: Non deterministic
-        case (Some(v1), Some(v2)) => k -> v2
+        case (Some(old), Some(newer)) if isNewer(old, newer) => k -> newer // TODO: Non deterministic
+        case (Some(v1), Some(_)) => k -> v1
       }).toSeq
 
     mutable.Map(merged: _*)
