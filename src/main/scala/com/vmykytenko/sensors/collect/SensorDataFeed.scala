@@ -1,22 +1,18 @@
 package com.vmykytenko.sensors.collect
 
-import com.vmykytenko.sensors.{KafkaConsumerConfig, SensorMessage, SensorMessageDe}
+import com.vmykytenko.sensors.{ApplicationStorageConfig, KafkaConsumerConfig, SensorMessage, SensorMessageDe}
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.streaming.{OutputMode, Trigger}
+import org.apache.spark.sql.streaming.OutputMode
 import org.apache.spark.sql.{Encoders, SparkSession}
 
+/**
+ * Reduces the SensorMessage by device id, leaving tha latest.
+ * Uses Parquet filled by other apps as a Datasource.
+ */
 case object SensorDataFeed {
 
-  /**
-   *
-   * @param kafkaConsumerOptions - map of options to serve input messages from Kafka. Must contain keys:
-   *                             "subscribe" - A comma-separated list of topics;
-   *                             "kafka.bootstrap.servers" - A comma-separated list of host:port
-   *                             and may contain a bunch of optional, for details see
-   *                             https://spark.apache.org/docs/3.3.0/structured-streaming-kafka-integration.html#creating-a-kafka-source-for-batch-queries
-   */
   def apply(consumerConfig: KafkaConsumerConfig,
-            storageOptions: Map[String, String],
+            applicationStorageConfig: ApplicationStorageConfig,
             isTest: Boolean)(implicit spark: SparkSession): Unit = {
 
     val rawKafkaMessages = spark.readStream
@@ -52,14 +48,12 @@ case object SensorDataFeed {
       .writeStream
       .format("memory")
       .outputMode(OutputMode.Complete())
-      .queryName(storageOptions("memory.table.name"))
-      .start
-//      .trigger(Trigger.ProcessingTime("0 seconds"))
+      .queryName(applicationStorageConfig.memorySinkName)
 //            .partitionBy("environmentName", "deviceName", "metric", "timestamp")
 //            .format("parquet")
-//            .option("checkpointLocation", storageOptions("checkpoint.location"))
-//            .option("path", storageOptions("parquet.path"))
-//      .start()
+//            .option("checkpointLocation", applicationStorageConfig.checkpointLocation)
+//            .option("path", applicationStorageConfig.parquetPath)
+      .start()
 
     if (isTest) {
       rawKafkaMessages.writeStream.format("console").start()

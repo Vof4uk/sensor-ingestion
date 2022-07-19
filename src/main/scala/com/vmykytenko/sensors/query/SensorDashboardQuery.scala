@@ -40,8 +40,9 @@ case class CompiledReportMessage(key: Array[Byte], value: Array[Byte])
 
 
 /**
- * Reduces the SensorMessage by device id, leaving tha latest.
- * Uses Parquet filled by other apps as a Datasource.
+ * Listens to client requests.
+ * On each request for sensor report, queries datastore for events with "environmentName", and
+ * aggregates rows into a single row with report. Sends the report to a pre-configured Kafka topic.
  */
 case object SensorDashboardQuery {
 
@@ -68,16 +69,8 @@ case object SensorDashboardQuery {
       })
   }
 
-  /**
-   *
-   * @param kafkaConsumerOptions - map of options to serve input messages from Kafka. Must contain keys:
-   *                             "subscribe" - A comma-separated list of topics;
-   *                             "kafka.bootstrap.servers" - A comma-separated list of host:port
-   *                             and may contain a bunch of optional, for details see
-   *                             https://spark.apache.org/docs/3.3.0/structured-streaming-kafka-integration.html#creating-a-kafka-source-for-batch-queries
-   */
   def apply(consumerConfig: KafkaConsumerConfig,
-            storageOptions: Map[String, String],
+            applicationStorageConfig: ApplicationStorageConfig,
             producerConfig: KafkaProducerConfig,
             isTest: Boolean)(implicit spark: SparkSession): Unit = {
 
@@ -85,15 +78,14 @@ case object SensorDashboardQuery {
     implicit val requestEncoder = Encoders.product[SensorReportRequestIn]
     implicit val reportRawEncoder = Encoders.product[ReportRawData]
     implicit val reportMessageEncoder = Encoders.product[CompiledReportMessage]
-    implicit val stringEncoder = ExpressionEncoder[String]()
 
 
     val sensorsView: Dataset[SensorMessage] = spark
 //      .read
 //      .schema(implicitly[Encoder[SensorMessage]].schema)
-//      .parquet(storageOptions("parquet.path"))
+//      .parquet(applicationStorageConfig.parquetPath)
 //      .as[SensorMessage]
-      .sql(s"select * from ${storageOptions("memory.table.name")}")
+      .sql(s"select * from ${applicationStorageConfig.memorySinkName}")
       .as[SensorMessage]
 
 
@@ -132,7 +124,7 @@ case object SensorDashboardQuery {
       .writeStream
       .format("kafka")
       .outputMode("complete")
-      .option("checkpointLocation", storageOptions("checkpoint.location"))
+      .option("checkpointLocation", applicationStorageConfig.checkpointLocation)
       .option("topic", producerConfig.topic)
       .option("kafka.bootstrap.servers", producerConfig.servers)
       .start()

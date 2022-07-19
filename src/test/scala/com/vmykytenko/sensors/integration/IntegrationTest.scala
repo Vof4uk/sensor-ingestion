@@ -48,18 +48,17 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
   }
 
   def getSensorFeedApplication(implicit sparkSession: SparkSession, testConfig: TestConfig): SensorFeedApp = {
-    val storageOptions = Map(
-      "checkpoint.location" -> s"${testConfig.tempDirectory}/feed",
-      "parquet.path" -> s"${testConfig.parquetDirectory}",
-      "memory.table.name" -> s"table_${testConfig.id.replace("-", "")}"
-    )
     SensorDataFeed(
       KafkaConsumerConfig(
         servers = KAFKA.getBootstrapServers,
         topic = testConfig.sensorFeedTopic
       ),
-      storageOptions,
-      true)
+      ApplicationStorageConfig(
+        parquetPath = s"${testConfig.parquetDirectory}",
+        checkpointLocation = s"${testConfig.tempDirectory}/feed",
+        memorySinkName = s"table_${testConfig.id.replace("-", "")}"
+      ),
+      isTest = true)
 
     val producerConfig = Map[String, Object](
       "bootstrap.servers" -> KAFKA.getBootstrapServers
@@ -86,22 +85,21 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
       "bootstrap.servers" -> KAFKA.getBootstrapServers
     ).asJava
 
-    val storageOptions = Map(
-      "checkpoint.location" -> s"${testConfig.tempDirectory}/query",
-      "parquet.path" -> s"${testConfig.parquetDirectory}",
-      "memory.table.name" -> s"table_${testConfig.id.replace("-", "")}"
-    )
-
     SensorDashboardQuery(
       KafkaConsumerConfig(
         servers = KAFKA.getBootstrapServers,
         topic = testConfig.queryReportTopic
       ),
-      storageOptions,
-      KafkaProducerConfig (
+      ApplicationStorageConfig(
+        parquetPath = s"${testConfig.parquetDirectory}",
+        checkpointLocation = s"${testConfig.tempDirectory}/query",
+        memorySinkName =  s"table_${testConfig.id.replace("-", "")}"
+      ),
+      KafkaProducerConfig(
         servers = KAFKA.getBootstrapServers,
         topic = testConfig.listenReportTopic
-      ), true)
+      ),
+      isTest = true)
 
     val consumer = new KafkaConsumer[SensorReportKey, SensorReport](
       consumerConfig,
