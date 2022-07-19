@@ -64,7 +64,10 @@ NFR-3: -
 NFR-4: Although it was not required, all the events are saved to HDFS, it is part of design. It is relatively easy to set up a CRON and cleanup stale records, because of partitioning.
 
 ## Testing
-I chose Testcontainers to emulate e2e tests. 
+I chose Testcontainers to emulate e2e tests. Run:
+```bash 
+sbt test 
+```
 
 ## Known issues:
 1. The number of events will grow, and Join operation may become a bottleneck and expensive. Data cleanup should help.
