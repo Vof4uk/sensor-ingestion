@@ -45,13 +45,14 @@ case class CompiledReportMessage(key: Array[Byte], value: Array[Byte])
  */
 case object SensorDashboardQuery {
 
-  private def parsedRequests(kafkaConsumerOptions: Map[String, String])
+  private def parsedRequests(consumerConfig: KafkaConsumerConfig)
                             (implicit spark: SparkSession, requestEncoder: Encoder[SensorReportRequestIn]): Dataset[SensorReportRequestIn] = {
 
     val rawKafkaMessages = spark.readStream
       .format("kafka")
-      .options(kafkaConsumerOptions)
-      .option("startingOffsets", "earliest") // TODO:
+      .option("kafka.bootstrap.servers", consumerConfig.servers)
+      .option("subscribe", consumerConfig.topic)
+      .option("startingOffsets", "earliest")
       .load()
 
     rawKafkaMessages
@@ -75,9 +76,9 @@ case object SensorDashboardQuery {
    *                             and may contain a bunch of optional, for details see
    *                             https://spark.apache.org/docs/3.3.0/structured-streaming-kafka-integration.html#creating-a-kafka-source-for-batch-queries
    */
-  def apply(kafkaConsumerOptions: Map[String, String],
+  def apply(consumerConfig: KafkaConsumerConfig,
             storageOptions: Map[String, String],
-            kafkaProducerOptions: Map[String, String],
+            producerConfig: KafkaProducerConfig,
             isTest: Boolean)(implicit spark: SparkSession): Unit = {
 
     implicit val sensorMsgEncoder = Encoders.product[SensorMessage]
@@ -88,12 +89,15 @@ case object SensorDashboardQuery {
 
 
     val sensorsView: Dataset[SensorMessage] = spark
-      .read
-      .schema(implicitly[Encoder[SensorMessage]].schema)
-      .parquet(storageOptions("parquet.path"))
+//      .read
+//      .schema(implicitly[Encoder[SensorMessage]].schema)
+//      .parquet(storageOptions("parquet.path"))
+//      .as[SensorMessage]
+      .sql(s"select * from ${storageOptions("memory.table.name")}")
       .as[SensorMessage]
 
-    val parsedReq = parsedRequests(kafkaConsumerOptions)
+
+    val parsedReq = parsedRequests(consumerConfig)
 
     val reportRawJoin = parsedReq
       .join(
@@ -129,7 +133,8 @@ case object SensorDashboardQuery {
       .format("kafka")
       .outputMode("complete")
       .option("checkpointLocation", storageOptions("checkpoint.location"))
-      .options(kafkaProducerOptions)
+      .option("topic", producerConfig.topic)
+      .option("kafka.bootstrap.servers", producerConfig.servers)
       .start()
 
     if (isTest) {

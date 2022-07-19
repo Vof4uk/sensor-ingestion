@@ -25,7 +25,8 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
       .withEmbeddedZookeeper()
   KAFKA.start()
 
-  case class TestConfig(tempDirectory: String,
+  case class TestConfig(id: String,
+                        tempDirectory: String,
                         parquetDirectory: String,
                         sensorFeedTopic: String,
                         queryReportTopic: String,
@@ -49,11 +50,14 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
   def getSensorFeedApplication(implicit sparkSession: SparkSession, testConfig: TestConfig): SensorFeedApp = {
     val storageOptions = Map(
       "checkpoint.location" -> s"${testConfig.tempDirectory}/feed",
-      "parquet.path" -> s"${testConfig.parquetDirectory}"
+      "parquet.path" -> s"${testConfig.parquetDirectory}",
+      "memory.table.name" -> s"table_${testConfig.id.replace("-", "")}"
     )
     SensorDataFeed(
-      KAFKA.getBootstrapServers,
-      testConfig.sensorFeedTopic,
+      KafkaConsumerConfig(
+        servers = KAFKA.getBootstrapServers,
+        topic = testConfig.sensorFeedTopic
+      ),
       storageOptions,
       true)
 
@@ -84,17 +88,19 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
 
     val storageOptions = Map(
       "checkpoint.location" -> s"${testConfig.tempDirectory}/query",
-      "parquet.path" -> s"${testConfig.parquetDirectory}"
+      "parquet.path" -> s"${testConfig.parquetDirectory}",
+      "memory.table.name" -> s"table_${testConfig.id.replace("-", "")}"
     )
 
     SensorDashboardQuery(
-      Map(
-        "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
-        "subscribe" -> testConfig.queryReportTopic),
+      KafkaConsumerConfig(
+        servers = KAFKA.getBootstrapServers,
+        topic = testConfig.queryReportTopic
+      ),
       storageOptions,
-      Map(
-        "kafka.bootstrap.servers" -> KAFKA.getBootstrapServers,
-        "topic" -> testConfig.listenReportTopic
+      KafkaProducerConfig (
+        servers = KAFKA.getBootstrapServers,
+        topic = testConfig.listenReportTopic
       ), true)
 
     val consumer = new KafkaConsumer[SensorReportKey, SensorReport](
@@ -146,10 +152,12 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
   }
 
   def getTestConfig(): TestConfig = {
-    val testDirectory = s"./target/spark/test/${this.getClass.getSimpleName}/${UUID.randomUUID().toString}"
+    val id = UUID.randomUUID().toString
+    val testDirectory = s"./target/spark/test/${this.getClass.getSimpleName}/$id}"
     val parquetDirectory = s"$testDirectory/tables"
     FileUtils.createParentDirectories(Paths.get(parquetDirectory + "/dummy").toFile)
     TestConfig(
+      id,
       tempDirectory = testDirectory,
       parquetDirectory = parquetDirectory,
       sensorFeedTopic = s"feed-${System.currentTimeMillis()}",
@@ -186,7 +194,7 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
     val reportApp = getSensorViewQueryApplication
 
 
-    (1 to 30).foreach { _ =>
+    (1 to 20).foreach { _ =>
       sendTo(sensorFeedApp.topic, sensorFeedApp.producer, env1device1metric1)
       Thread.sleep(250)
       sendTo(sensorFeedApp.topic, sensorFeedApp.producer, env1device1metric2)
@@ -195,7 +203,6 @@ class IntegrationTest extends AnyFlatSpec with should.Matchers with BeforeAndAft
       Thread.sleep(250)
     }
     val expectedSensor1device1metric1 = env1device1metric1
-    val expectedSensor1device1metric2 = env1device1metric2
 
     Thread.sleep(20000)
 

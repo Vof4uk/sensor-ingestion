@@ -1,8 +1,8 @@
 package com.vmykytenko.sensors.collect
 
-import com.vmykytenko.sensors.{SensorMessage, SensorMessageDe}
+import com.vmykytenko.sensors.{KafkaConsumerConfig, SensorMessage, SensorMessageDe}
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.streaming.Trigger
+import org.apache.spark.sql.streaming.{OutputMode, Trigger}
 import org.apache.spark.sql.{Encoders, SparkSession}
 
 case object SensorDataFeed {
@@ -15,15 +15,14 @@ case object SensorDataFeed {
    *                             and may contain a bunch of optional, for details see
    *                             https://spark.apache.org/docs/3.3.0/structured-streaming-kafka-integration.html#creating-a-kafka-source-for-batch-queries
    */
-  def apply(servers: String,
-            topic: String,
+  def apply(consumerConfig: KafkaConsumerConfig,
             storageOptions: Map[String, String],
             isTest: Boolean)(implicit spark: SparkSession): Unit = {
 
     val rawKafkaMessages = spark.readStream
       .format("kafka")
-      .option("kafka.bootstrap.servers", servers)
-      .option("subscribe", topic)
+      .option("kafka.bootstrap.servers", consumerConfig.servers)
+      .option("subscribe", consumerConfig.topic)
       .option("startingOffsets", "earliest")
       .load()
 
@@ -34,11 +33,12 @@ case object SensorDataFeed {
         SensorMessageDe.deserialize(topic, row.getAs[Array[Byte]]("value"))
       })
 
+    val windowSize = "5 minutes"
     val grouped = parsedStream
       .withColumn("watermark", timestamp_seconds(col("timestamp")))
-      .withWatermark("watermark", "5 seconds")
+      .withWatermark("watermark", windowSize)
       .groupBy(
-        window(col("watermark"), "5 seconds"),
+        window(col("watermark"), windowSize),
         col("environmentName"),
         col("deviceName"),
         col("metric")
@@ -50,12 +50,16 @@ case object SensorDataFeed {
 
     grouped
       .writeStream
-      .trigger(Trigger.ProcessingTime("0 seconds"))
-            .partitionBy("environmentName", "deviceName", "metric", "timestamp")
-            .format("parquet")
-            .option("checkpointLocation", storageOptions("checkpoint.location"))
-            .option("path", storageOptions("parquet.path"))
-      .start()
+      .format("memory")
+      .outputMode(OutputMode.Complete())
+      .queryName(storageOptions("memory.table.name"))
+      .start
+//      .trigger(Trigger.ProcessingTime("0 seconds"))
+//            .partitionBy("environmentName", "deviceName", "metric", "timestamp")
+//            .format("parquet")
+//            .option("checkpointLocation", storageOptions("checkpoint.location"))
+//            .option("path", storageOptions("parquet.path"))
+//      .start()
 
     if (isTest) {
       rawKafkaMessages.writeStream.format("console").start()
